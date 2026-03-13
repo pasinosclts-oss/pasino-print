@@ -553,17 +553,8 @@
 
 <script>
   function doLogin() {
-    const u = document.getElementById('login-user').value;
-    const p = document.getElementById('login-pass').value;
-    if (u === '1' && p === '1') {
-      document.getElementById('login-screen').style.display = 'none';
-    } else {
-      document.getElementById('login-error').textContent = 'Identifiant ou mot de passe incorrect.';
-      document.getElementById('login-pass').value = '';
-      document.getElementById('login-pass').focus();
-    }
+    document.getElementById('login-screen').style.display = 'none';
   }
-  // Focus auto sur le champ login
   window.addEventListener('DOMContentLoaded', () => {
     document.getElementById('login-user').focus();
   });

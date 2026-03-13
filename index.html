@@ -4,11 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Pasino Grand - Version 1.1304</title>
-<!-- Firebase SDK -->
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-
+<!-- Firebase SDK (compat version - works everywhere) -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script>
   const firebaseConfig = {
     apiKey: "AIzaSyD4G71UdinRxVdO_KAAAZ-oVTSi1TxIxOE",
     authDomain: "pasino-print.firebaseapp.com",
@@ -17,42 +16,9 @@
     messagingSenderId: "1025372454502",
     appId: "1:1025372454502:web:3296112f06efba8ab1b7a7"
   };
-
-  const app = initializeApp(firebaseConfig);
-  const firestore = getFirestore(app);
-  const DB_DOC = doc(firestore, 'pasino', 'maindb');
-
-  // Expose to global scope for the rest of the app
-  window._firestore = firestore;
-  window._dbDoc = DB_DOC;
-  window._setDoc = setDoc;
-  window._getDoc = getDoc;
-  window._onSnapshot = onSnapshot;
+  firebase.initializeApp(firebaseConfig);
+  window._firestoreDB = firebase.firestore();
   window._firebaseReady = false;
-
-  // Load data from Firestore on start, then listen for real-time updates
-  onSnapshot(DB_DOC, (snap) => {
-    if (snap.exists()) {
-      const remote = snap.data();
-      if (remote && remote.db) {
-        window.db = JSON.parse(remote.db);
-      }
-    }
-    if (!window._firebaseReady) {
-      window._firebaseReady = true;
-      // Boot the app once Firebase has loaded
-      if (typeof window._bootApp === 'function') window._bootApp();
-    } else {
-      // Real-time update from another user
-      if (typeof renderDashboard === 'function') {
-        renderDashboard();
-        renderSuivi();
-        renderImprimeurs();
-        renderContacts();
-        checkAlarms();
-      }
-    }
-  });
 </script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -980,10 +946,13 @@ let db = {
 };
 
 function saveDB() {
-  // Save to Firestore (shared) + localStorage (fallback)
+  // Save to localStorage (fallback)
   try { localStorage.setItem('printflow_db', JSON.stringify(db)); } catch(e){}
-  if (window._dbDoc && window._setDoc) {
-    window._setDoc(window._dbDoc, { db: JSON.stringify(db) }).catch(e => console.warn('Firestore save error:', e));
+  // Save to Firestore (shared, real-time)
+  if (window._firestoreDB) {
+    window._firestoreDB.collection('pasino').doc('maindb')
+      .set({ db: JSON.stringify(db) })
+      .catch(e => console.warn('Firestore save error:', e));
   }
 }
 function loadDB() {
@@ -2192,37 +2161,79 @@ setInterval(() => { checkAlarms(); }, 60000);
 // ═══════════════════════════════════════════════════════════
 // BOOT — charger les données puis lancer l'app
 // ═══════════════════════════════════════════════════════════
-// Show a loading indicator while Firebase connects
-document.addEventListener('DOMContentLoaded', () => {
-  const main = document.querySelector('.layout');
-  if (main) main.style.opacity = '0.4';
-});
-
-window._bootApp = function() {
-  const main = document.querySelector('.layout');
-  if (main) main.style.opacity = '1';
-  renderDashboard();
-  renderSuivi();
-  renderImprimeurs();
-  renderContacts();
-  checkAlarms();
-  function updateClock() {
-    const el = document.getElementById('clock');
-    if (el) el.textContent = new Date().toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+// ── Firebase real-time listener + app boot ──
+(function startFirebase() {
+  function bootApp() {
+    const main = document.querySelector('.layout');
+    if (main) main.style.opacity = '1';
+    renderDashboard();
+    renderSuivi();
+    renderImprimeurs();
+    renderContacts();
+    checkAlarms();
+    function updateClock() {
+      const el = document.getElementById('clock');
+      if (el) el.textContent = new Date().toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+    }
+    updateClock();
+    setInterval(updateClock, 1000);
   }
-  updateClock();
-  setInterval(updateClock, 1000);
-};
 
-// Fallback: if Firebase doesn't load in 4s, boot with localStorage data
-setTimeout(() => {
-  if (!window._firebaseReady) {
-    console.warn('Firebase timeout — using localStorage fallback');
+  if (!window._firestoreDB) {
+    // Firebase not available, use localStorage
     loadDB();
-    window._firebaseReady = true;
-    window._bootApp();
+    bootApp();
+    return;
   }
-}, 4000);
+
+  // Dim app while loading
+  document.addEventListener('DOMContentLoaded', () => {
+    const main = document.querySelector('.layout');
+    if (main) main.style.opacity = '0.4';
+  });
+
+  // Listen for real-time changes
+  window._firestoreDB.collection('pasino').doc('maindb')
+    .onSnapshot((snap) => {
+      if (snap.exists) {
+        try {
+          const remote = snap.data();
+          if (remote && remote.db) {
+            db = JSON.parse(remote.db);
+            try { localStorage.setItem('printflow_db', remote.db); } catch(e){}
+          }
+        } catch(e) { console.warn('Parse error:', e); }
+      }
+      if (!window._firebaseReady) {
+        window._firebaseReady = true;
+        bootApp();
+      } else {
+        // Real-time update from another user
+        renderDashboard();
+        renderSuivi();
+        renderImprimeurs();
+        renderContacts();
+        checkAlarms();
+      }
+    }, (err) => {
+      console.warn('Firestore error:', err);
+      if (!window._firebaseReady) {
+        loadDB();
+        window._firebaseReady = true;
+        bootApp();
+      }
+    });
+
+  // Fallback: if Firebase takes too long
+  setTimeout(() => {
+    if (!window._firebaseReady) {
+      console.warn('Firebase timeout — fallback localStorage');
+      loadDB();
+      window._firebaseReady = true;
+      bootApp();
+    }
+  }, 5000);
+})();
 </script>
 
 <!-- ── MODAL SITE ── -->
